@@ -13,26 +13,4 @@
         app:camera_type="back"
         app:scale_type="full" />
 
-    <Button
-        android:id="@+id/btTrain"
-        android:layout_width="wrap_content"
-        android:layout_height="wrap_content"
-        android:text="Start Train"
-        android:layout_gravity="bottom|left"
-        />
-
-    <Button
-        android:id="@+id/btPhoto"
-        android:layout_width="wrap_content"
-        android:layout_height="wrap_content"
-        android:text="Take Photo"
-        android:layout_gravity="bottom|center_horizontal"/>
-
-    <Button
-        android:id="@+id/btReset"
-        android:layout_width="wrap_content"
-        android:layout_height="wrap_content"
-        android:text="Reset"
-        android:layout_gravity="bottom|right"/>
-
 </FrameLayout>
