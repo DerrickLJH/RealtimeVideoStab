@@ -11,6 +11,9 @@ import android.graphics.ImageFormat;
 import android.graphics.Rect;
 import android.graphics.SurfaceTexture;
 import android.hardware.Camera;
+import android.hardware.Camera.PictureCallback;
+import android.hardware.Camera.PreviewCallback;
+import android.hardware.Camera.Size;
 import android.os.Build;
 import android.util.AttributeSet;
 import android.util.Log;
@@ -18,7 +21,7 @@ import android.view.Surface;
 import android.view.SurfaceHolder;
 import android.view.SurfaceView;
 
-import org.bytedeco.javacpp.opencv_core;
+import org.bytedeco.javacpp.opencv_core.Mat;
 import org.bytedeco.javacv.AndroidFrameConverter;
 import org.bytedeco.javacv.FFmpegFrameFilter;
 import org.bytedeco.javacv.Frame;
@@ -31,7 +34,15 @@ import java.util.List;
 
 import static org.bytedeco.javacpp.avutil.AV_PIX_FMT_NV21;
 
-public class CvCameraPreview extends SurfaceView implements SurfaceHolder.Callback, Camera.PreviewCallback {
+/**
+ * This is the graphical object used to display a real-time preview of the Camera.
+ * It MUST be an extension of the {@link SurfaceView} class.<br />
+ * It also needs to implement some other interfaces like {@link SurfaceHolder.Callback}
+ * (to react to SurfaceView events)
+ *
+ * @author alessandrofrancesconi, hunghd
+ */
+public class CvCameraPreview extends SurfaceView implements SurfaceHolder.Callback, PreviewCallback {
 
     private final String LOG_TAG = "CvCameraPreview";
 
@@ -65,7 +76,7 @@ public class CvCameraPreview extends SurfaceView implements SurfaceHolder.Callba
 
     /**
      * The maximum dimension (in pixels) of the images produced when a
-     * {@link Camera.PictureCallback#onPictureTaken(byte[], Camera)} event is
+     * {@link PictureCallback#onPictureTaken(byte[], Camera)} event is
      * fired. Again, this is a maximum value and could not be the
      * real one implemented by the device.
      */
@@ -462,9 +473,9 @@ public class CvCameraPreview extends SurfaceView implements SurfaceHolder.Callba
         }
         try {
             Camera.Parameters parameters = cameraDevice.getParameters();
-            List<Camera.Size> sizes = parameters.getSupportedPreviewSizes();
+            List<Size> sizes = parameters.getSupportedPreviewSizes();
             if (sizes != null) {
-                Camera.Size bestPreviewSize = getBestSize(sizes, PREVIEW_MAX_WIDTH);
+                Size bestPreviewSize = getBestSize(sizes, PREVIEW_MAX_WIDTH);
 
                 frameWidth = bestPreviewSize.width;
                 frameHeight = bestPreviewSize.height;
@@ -543,10 +554,10 @@ public class CvCameraPreview extends SurfaceView implements SurfaceHolder.Callba
      * @param widthThreshold the maximum value we want to apply
      * @return an optimal size <= widthThreshold
      */
-    private Camera.Size getBestSize(List<Camera.Size> sizes, int widthThreshold) {
-        Camera.Size bestSize = null;
+    private Size getBestSize(List<Size> sizes, int widthThreshold) {
+        Size bestSize = null;
 
-        for (Camera.Size currentSize : sizes) {
+        for (Size currentSize : sizes) {
             boolean isDesiredRatio = ((currentSize.width / ASPECT_RATIO_W) == (currentSize.height / ASPECT_RATIO_H));
             boolean isBetterSize = (bestSize == null || currentSize.width > bestSize.width);
             boolean isInBounds = currentSize.width <= widthThreshold;
@@ -777,10 +788,10 @@ public class CvCameraPreview extends SurfaceView implements SurfaceHolder.Callba
      * @param frame - the current frame to be delivered
      */
     protected void deliverAndDrawFrame(Frame frame) {
-        opencv_core.Mat processedMat = null;
+        Mat processedMat = null;
 
         if (listener != null) {
-            opencv_core.Mat mat = converterToMat.convert(frame);
+            Mat mat = converterToMat.convert(frame);
             processedMat = listener.onCameraFrame(mat);
             frame = converterToMat.convert(processedMat);
             if (mat != null) {
@@ -831,7 +842,7 @@ public class CvCameraPreview extends SurfaceView implements SurfaceHolder.Callba
          * The returned values - is a modified frame which needs to be displayed on the screen.
          * TODO: pass the parameters specifying the format of the frame (BPP, YUV or RGB and etc)
          */
-        public opencv_core.Mat onCameraFrame(opencv_core.Mat mat);
+        public Mat onCameraFrame(Mat mat);
     }
 
 }

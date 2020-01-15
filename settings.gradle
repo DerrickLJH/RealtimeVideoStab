@@ -1,2 +1,3 @@
 include ':app'
 rootProject.name='RealtimeVideoStab'
+include ':openCVLibrary348'
