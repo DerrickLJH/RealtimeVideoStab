@@ -24,12 +24,16 @@ import android.widget.Toast;
 import android.widget.VideoView;
 
 import static org.bytedeco.javacpp.helper.opencv_core.RGB;
+import static org.bytedeco.javacpp.opencv_core.CV_32F;
+import static org.bytedeco.javacpp.opencv_core.CV_8UC3;
+import static org.bytedeco.javacpp.opencv_core.CV_8UC4;
 import static org.bytedeco.javacpp.opencv_core.CV_TERMCRIT_EPS;
 import static org.bytedeco.javacpp.opencv_core.CV_TERMCRIT_ITER;
 import static org.bytedeco.javacpp.opencv_core.Mat;
 import static org.bytedeco.javacpp.opencv_core.Size;
 import static org.bytedeco.javacpp.opencv_core.Scalar;
 import static org.bytedeco.javacpp.opencv_imgproc.CV_BGR2GRAY;
+import static org.bytedeco.javacpp.opencv_imgproc.CV_RGBA2GRAY;
 import static org.bytedeco.javacpp.opencv_imgproc.circle;
 import static org.bytedeco.javacpp.opencv_imgproc.cornerSubPix;
 import static org.bytedeco.javacpp.opencv_imgproc.cvtColor;
@@ -39,6 +43,7 @@ import static org.bytedeco.javacpp.opencv_imgproc.goodFeaturesToTrack;
 import static org.bytedeco.javacpp.opencv_imgproc.line;
 import static org.bytedeco.javacpp.opencv_imgproc.medianBlur;
 import static org.bytedeco.javacpp.opencv_core.TermCriteria;
+import static org.bytedeco.javacpp.opencv_imgproc.warpAffine;
 import static org.bytedeco.javacpp.opencv_video.KalmanFilter;
 import static org.bytedeco.javacpp.opencv_video.calcOpticalFlowPyrLK;
 import static org.bytedeco.javacpp.opencv_core.Point;
@@ -65,7 +70,10 @@ import static org.bytedeco.javacpp.opencv_video.estimateRigidTransform;
 public class MainActivity extends AppCompatActivity implements CvCameraPreview.CvCameraViewListener {
     public static final String TAG = "MainActivity";
     private CvCameraPreview mOpenCvCameraView;
-    private Mat grey, features, prevFeatures;
+    private Mat currGrey, currFeatures, prevGrey, prevFeatures;
+    private boolean getPrevFrame = false;
+    private Mat prevFrame = new Mat();
+    private Mat last_transformMatrix = new Mat();
     private static final int HORIZONTAL_BORDER_CROP = 20;
 
 
@@ -119,61 +127,73 @@ public class MainActivity extends AppCompatActivity implements CvCameraPreview.C
 
     @Override
     public void onCameraViewStarted(int width, int height) {
-        grey = new Mat(height, width, CV_8UC1);
+        prevFrame = new Mat(height, width, CV_8UC4);
+        currGrey = new Mat(height, width, CV_8UC1);
+        prevGrey = new Mat(height, width, CV_8UC1);
     }
 
     @Override
     public void onCameraViewStopped() {
-        grey.release();
+        currGrey.release();
     }
 
     @Override
-    public Mat onCameraFrame(Mat mat) {
-        cvtColor(mat, grey, CV_BGR2GRAY);
-        // Improve quality and corner detection
-
+    public Mat onCameraFrame(Mat currFrame) {
         int winSize = 15;
         TermCriteria term = new TermCriteria(TermCriteria.EPS | TermCriteria.MAX_ITER, 20, 0.03);
 
-        medianBlur(grey, grey, 5);
-        features = new Mat();
-        prevFeatures = new Mat();
-        // erode
-        Mat dilate = getStructuringElement(Imgproc.MORPH_RECT, new Size(3, 3));
-        dilate(grey, grey, dilate);
+        if (!getPrevFrame) {
+            prevFrame = currFrame.clone();
+            getPrevFrame = true;
 
-        // Compute goodFeaturesToTrack()
-        goodFeaturesToTrack(grey, features, 500, 0.05, 5.0, null, 3, false, 0.04);
-        if (features.empty()) return mat;
-        cornerSubPix(grey, features, new Size(15, 15), new Size(-1, -1), term);
+            return prevFrame;
+        } else {
+            cvtColor(prevFrame, prevGrey, CV_RGBA2GRAY);
+            cvtColor(currFrame, currGrey, CV_BGR2GRAY);
+            // Improve quality and corner detection
+            Log.i(TAG, "GOT CURRENT FRAME!" + currFrame.data());
 
-        // Compute Optical Flow using calcOpticalFlyPyrLK()
-        Mat features_found = new Mat(); // status
-        Mat feature_err = new Mat(); // err
-        Mat cornersB = new Mat();
+            medianBlur(prevGrey, prevGrey, 5);
+            prevFeatures = new Mat();
+            // erode
+            Mat dilate = getStructuringElement(Imgproc.MORPH_RECT, new Size(3, 3));
+            dilate(prevGrey, prevGrey, dilate);
 
-        calcOpticalFlowPyrLK(grey, grey, features, cornersB, features_found, feature_err, new Size(winSize, winSize), 5, term, 0, 1e-4);
+            // Compute goodFeaturesToTrack()
+            goodFeaturesToTrack(prevGrey, prevFeatures, 500, 0.05, 5.0, null, 3, false, 0.04);
+            if (prevFeatures.empty()) return currFrame;
+            cornerSubPix(prevGrey, prevFeatures, new Size(15, 15), new Size(-1, -1), term);
 
-        // Make an image of the results
-        FloatIndexer cornersAidx = features.createIndexer();
-        FloatIndexer cornersBidx = cornersB.createIndexer();
-        UByteIndexer features_found_idx = features_found.createIndexer();
-        FloatIndexer feature_errors_idx = feature_err.createIndexer();
-        for (int i = 0; i < cornersAidx.sizes()[0]; i++) {
-            if (features_found_idx.get(i) == 0 || feature_errors_idx.get(i) > 550) {
-                Log.e(TAG, "Error is " + feature_errors_idx.get(i));
-                continue;
+            // Compute Optical Flow using calcOpticalFlyPyrLK()
+            Mat features_found = new Mat(); // status
+            Mat feature_err = new Mat(); // err
+            Mat currFeatures = new Mat();
+
+            calcOpticalFlowPyrLK(prevGrey, currGrey, prevFeatures, currFeatures, features_found, feature_err, new Size(winSize, winSize), 5, term, 0, 1e-4);
+
+            // Make an image of the results
+            FloatIndexer cornersAidx = prevFeatures.createIndexer();
+            FloatIndexer cornersBidx = currFeatures.createIndexer();
+            UByteIndexer features_found_idx = features_found.createIndexer();
+            FloatIndexer feature_errors_idx = feature_err.createIndexer();
+            for (int i = 0; i < cornersAidx.sizes()[0]; i++) {
+                if (features_found_idx.get(i) == 0 || feature_errors_idx.get(i) > 550) {
+                    Log.e(TAG, "Error is " + feature_errors_idx.get(i));
+                    continue;
+                }
+
+                Log.i(TAG, "Got it!");
+                Point p0 = new Point(Math.round(cornersAidx.get(i, 0)),
+                        Math.round(cornersAidx.get(i, 1)));
+                Point p1 = new Point(Math.round(cornersBidx.get(i, 0)),
+                        Math.round(cornersBidx.get(i, 1)));
+                line(currFrame, p0, p1, new Scalar(0, 255, 0, 0),
+                        2, 8, 0);
+                prevFrame = currFrame.clone();
             }
-            Log.i(TAG, "Got it!");
-            Point p0 = new Point(Math.round(cornersAidx.get(i, 0)),
-                    Math.round(cornersAidx.get(i, 1)));
-            Point p1 = new Point(Math.round(cornersBidx.get(i, 0)),
-                    Math.round(cornersBidx.get(i, 1)));
-            line(mat, p0, p1, new Scalar(0, 255, 0,0),
-                    2, 8, 0);
-        }
 
-        // Keep only good points
+            /*Keep only good points, REFER TO videoStabilization project*/
+
 //        calcOpticalFlowPyrLK(gray_1, gray_2, features_1, features_2, status, err,
 //                wins_size, max_level, term_crit);
 //
@@ -189,14 +209,20 @@ public class MainActivity extends AppCompatActivity implements CvCameraPreview.C
 //        features_found.resize(k);
 //        feature_err.resize(k);
 
-        // Estimate a rigid transformation
-        Mat transformMatrix = estimateRigidTransform(features, cornersB,false);
+            // Estimate a rigid transformation
+            Mat transformMatrix = estimateRigidTransform(prevFeatures, currFeatures, false);
+            if (transformMatrix.data() == null) {
+                last_transformMatrix.copyTo(transformMatrix);
+            }
 
-        // Smoothing using Kalman filter
+            transformMatrix.copyTo(last_transformMatrix);
+            // Smoothing using Kalman filter
 
-        // Warping of the picture
-
-        return mat;
+            // Warping of the picture
+            Mat stabFrame = new Mat();
+            // warpAffine(currFrame, stabFrame, transformMatrix, currFrame.size());
+            return currFrame;
+        }
     }
 
 }
