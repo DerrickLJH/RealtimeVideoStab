@@ -11,7 +11,7 @@
         android:layout_height="match_parent"
         android:layout_gravity="center"
         android:visibility="visible"
-        app:camera_type="front"
+        app:camera_type="back"
         app:scale_type="fit" />
 
 </FrameLayout>

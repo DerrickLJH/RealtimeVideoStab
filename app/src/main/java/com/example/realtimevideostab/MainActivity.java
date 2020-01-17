@@ -24,6 +24,7 @@ import android.widget.Toast;
 import android.widget.VideoView;
 
 import static org.bytedeco.javacpp.helper.opencv_core.RGB;
+import static org.bytedeco.javacpp.opencv_calib3d.findHomography;
 import static org.bytedeco.javacpp.opencv_core.CV_32F;
 import static org.bytedeco.javacpp.opencv_core.CV_8UC3;
 import static org.bytedeco.javacpp.opencv_core.CV_8UC4;
@@ -32,7 +33,9 @@ import static org.bytedeco.javacpp.opencv_core.CV_TERMCRIT_ITER;
 import static org.bytedeco.javacpp.opencv_core.Mat;
 import static org.bytedeco.javacpp.opencv_core.Size;
 import static org.bytedeco.javacpp.opencv_core.Scalar;
+import static org.bytedeco.javacpp.opencv_core.gemm;
 import static org.bytedeco.javacpp.opencv_imgproc.CV_BGR2GRAY;
+import static org.bytedeco.javacpp.opencv_imgproc.CV_BGRA2GRAY;
 import static org.bytedeco.javacpp.opencv_imgproc.CV_RGBA2GRAY;
 import static org.bytedeco.javacpp.opencv_imgproc.circle;
 import static org.bytedeco.javacpp.opencv_imgproc.cornerSubPix;
@@ -142,87 +145,103 @@ public class MainActivity extends AppCompatActivity implements CvCameraPreview.C
         int winSize = 15;
         TermCriteria term = new TermCriteria(TermCriteria.EPS | TermCriteria.MAX_ITER, 20, 0.03);
 
-        if (!getPrevFrame) {
-            prevFrame = currFrame.clone();
-            getPrevFrame = true;
-
-            return prevFrame;
-        } else {
-            cvtColor(prevFrame, prevGrey, CV_RGBA2GRAY);
-            cvtColor(currFrame, currGrey, CV_BGR2GRAY);
-            // Improve quality and corner detection
-            Log.i(TAG, "GOT CURRENT FRAME!" + currFrame.data());
-
-            medianBlur(prevGrey, prevGrey, 5);
-            prevFeatures = new Mat();
-            // erode
-            Mat dilate = getStructuringElement(Imgproc.MORPH_RECT, new Size(3, 3));
-            dilate(prevGrey, prevGrey, dilate);
-
-            // Compute goodFeaturesToTrack()
-            goodFeaturesToTrack(prevGrey, prevFeatures, 500, 0.05, 5.0, null, 3, false, 0.04);
-            if (prevFeatures.empty()) return currFrame;
-            cornerSubPix(prevGrey, prevFeatures, new Size(15, 15), new Size(-1, -1), term);
-
-            // Compute Optical Flow using calcOpticalFlyPyrLK()
-            Mat features_found = new Mat(); // status
-            Mat feature_err = new Mat(); // err
-            Mat currFeatures = new Mat();
-
-            calcOpticalFlowPyrLK(prevGrey, currGrey, prevFeatures, currFeatures, features_found, feature_err, new Size(winSize, winSize), 5, term, 0, 1e-4);
-
-            // Make an image of the results
-            FloatIndexer cornersAidx = prevFeatures.createIndexer();
-            FloatIndexer cornersBidx = currFeatures.createIndexer();
-            UByteIndexer features_found_idx = features_found.createIndexer();
-            FloatIndexer feature_errors_idx = feature_err.createIndexer();
-            for (int i = 0; i < cornersAidx.sizes()[0]; i++) {
-                if (features_found_idx.get(i) == 0 || feature_errors_idx.get(i) > 550) {
-                    Log.e(TAG, "Error is " + feature_errors_idx.get(i));
-                    continue;
-                }
-
-                Log.i(TAG, "Got it!");
-                Point p0 = new Point(Math.round(cornersAidx.get(i, 0)),
-                        Math.round(cornersAidx.get(i, 1)));
-                Point p1 = new Point(Math.round(cornersBidx.get(i, 0)),
-                        Math.round(cornersBidx.get(i, 1)));
-                line(currFrame, p0, p1, new Scalar(0, 255, 0, 0),
-                        2, 8, 0);
-                prevFrame = currFrame.clone();
-            }
-
-            /*Keep only good points, REFER TO videoStabilization project*/
-
-//        calcOpticalFlowPyrLK(gray_1, gray_2, features_1, features_2, status, err,
-//                wins_size, max_level, term_crit);
-//
-//        long i, k;
-//        for( i = k = 0; i < features_found.size(); i++ ){
-//            if (!features_found[i]) continue;
-//            features[k] = features[i];
-//            cornersB[k] = cornersB[i];
-//            feature_err[k] = feature_err[i];
-//            k++;
+//        if (prevFrame.data() == null) {
+//            prevFrame = currFrame;
+//            Log.i(TAG, "No data.");
 //        }
-//        cornersB.resize(k);
-//        features_found.resize(k);
-//        feature_err.resize(k);
+//        cvtColor(prevFrame, prevGrey, CV_RGBA2GRAY);
+        cvtColor(currFrame, currGrey, CV_BGRA2GRAY);
+        // Improve quality and corner detection
+        Log.i(TAG, "GOT CURRENT FRAME!" + currFrame.data());
 
-            // Estimate a rigid transformation
-            Mat transformMatrix = estimateRigidTransform(prevFeatures, currFeatures, false);
-            if (transformMatrix.data() == null) {
-                last_transformMatrix.copyTo(transformMatrix);
+        medianBlur(currGrey, currGrey, 5);
+//        medianBlur(prevGrey, prevGrey, 5);
+        prevFeatures = new Mat();
+        // erode
+        Mat dilate = getStructuringElement(Imgproc.MORPH_RECT, new Size(3, 3));
+        dilate(currGrey, currGrey, dilate);
+//        dilate(prevGrey, prevGrey, dilate);
+
+        // Compute goodFeaturesToTrack()
+        goodFeaturesToTrack(currGrey, prevFeatures, 500, 0.05, 5.0, null, 3, false, 0.04);
+        if (prevFeatures.empty()) return currFrame;
+        cornerSubPix(currGrey, prevFeatures, new Size(15, 15), new Size(-1, -1), term);
+
+        // Compute Optical Flow using calcOpticalFlyPyrLK()
+        Mat features_found = new Mat(); // status
+        Mat feature_err = new Mat(); // err
+        Mat currFeatures = new Mat();
+
+        calcOpticalFlowPyrLK(currGrey, currGrey, prevFeatures, currFeatures, features_found, feature_err, new Size(winSize, winSize), 5, term, 0, 1e-4);
+
+        // Make an image of the results
+        FloatIndexer cornersAidx = prevFeatures.createIndexer(); //prevPointIndex
+        FloatIndexer cornersBidx = currFeatures.createIndexer(); //currPointIndex
+        UByteIndexer features_found_idx = features_found.createIndexer(); //status
+        FloatIndexer feature_errors_idx = feature_err.createIndexer(); //err
+
+        Mat prevCornersClean = new Mat(prevFeatures.size(), prevFeatures.type());
+        Mat currCornersClean = new Mat(currFeatures.size(), currFeatures.type());
+
+        FloatIndexer currCleanPointIndex = currCornersClean.createIndexer(true);
+        FloatIndexer prevCleanPointIndex = prevCornersClean.createIndexer(true);
+
+        //Keep only good points, REFER TO videoStabilization project
+        int k = 0;
+        int j;
+        for (j = 0; j < features_found.rows(); j++) {
+            if (features_found_idx.get(j) != 0) {
+                currCleanPointIndex.put(k, 0, cornersBidx.get(j, 0));
+                currCleanPointIndex.put(k, 1, cornersBidx.get(j, 1));
+                prevCleanPointIndex.put(k, 0, cornersAidx.get(j, 0));
+                prevCleanPointIndex.put(k, 1, cornersAidx.get(j, 1));
+
+                k++;
+            }
+        }
+
+        //delete unused space in the corner matrix
+        try {
+            currCornersClean.pop_back(j - k + 1);
+            prevCornersClean.pop_back(j - k + 1);
+        }catch (Exception e){
+            e.printStackTrace();
+        }
+
+        for (int i = 0; i < prevCleanPointIndex.sizes()[0]; i++) {
+            if (features_found_idx.get(i) == 0 || feature_errors_idx.get(i) > 550) {
+                Log.e(TAG, "Error is " + feature_errors_idx.get(i));
+                continue;
             }
 
-            transformMatrix.copyTo(last_transformMatrix);
-            // Smoothing using Kalman filter
-
-            // Warping of the picture
-            Mat stabFrame = new Mat();
-            // warpAffine(currFrame, stabFrame, transformMatrix, currFrame.size());
-            return currFrame;
+            Log.i(TAG, "Got it!");
+            Point p0 = new Point(Math.round(prevCleanPointIndex.get(i, 0)),
+                    Math.round(prevCleanPointIndex.get(i, 1)));
+            Point p1 = new Point(Math.round(currCleanPointIndex.get(i, 0)),
+                    Math.round(currCleanPointIndex.get(i, 1)));
+            line(currFrame, p0, p1, new Scalar(0, 255, 0, 0),
+                    2, 8, 0);
         }
+
+//        // Estimate a rigid transformation
+//        Mat transformMatrix = estimateRigidTransform(prevCornersClean, currCornersClean, false);
+//        if (transformMatrix.data() == null) {
+//            last_transformMatrix.copyTo(transformMatrix);
+//        }
+//
+//        transformMatrix.copyTo(last_transformMatrix);
+//        // Smoothing using Kalman filter
+
+
+//
+//        // Warping of the picture
+//        Mat stabFrame = new Mat();
+//        // warpAffine(currFrame, stabFrame, transformMatrix, currFrame.size());
+        currFeatures.release();
+        currGrey.release();
+        return currFrame;
+
     }
 
+    private void doKalmanFilter(){}
 }
