@@ -26,6 +26,7 @@ import android.widget.VideoView;
 import static org.bytedeco.javacpp.helper.opencv_core.RGB;
 import static org.bytedeco.javacpp.opencv_calib3d.findHomography;
 import static org.bytedeco.javacpp.opencv_core.CV_32F;
+import static org.bytedeco.javacpp.opencv_core.CV_64F;
 import static org.bytedeco.javacpp.opencv_core.CV_8UC3;
 import static org.bytedeco.javacpp.opencv_core.CV_8UC4;
 import static org.bytedeco.javacpp.opencv_core.CV_TERMCRIT_EPS;
@@ -55,6 +56,7 @@ import static org.bytedeco.javacpp.opencv_imgproc.rectangle;
 import static org.bytedeco.javacpp.opencv_imgproc.resize;
 import static org.bytedeco.javacpp.opencv_objdetect.CascadeClassifier;
 
+import org.bytedeco.javacpp.indexer.DoubleIndexer;
 import org.bytedeco.javacpp.indexer.FloatIndexer;
 import org.bytedeco.javacpp.indexer.UByteIndexer;
 import org.bytedeco.javacpp.opencv_core;
@@ -145,11 +147,11 @@ public class MainActivity extends AppCompatActivity implements CvCameraPreview.C
         int winSize = 15;
         TermCriteria term = new TermCriteria(TermCriteria.EPS | TermCriteria.MAX_ITER, 20, 0.03);
 
-//        if (prevFrame.data() == null) {
-//            prevFrame = currFrame;
-//            Log.i(TAG, "No data.");
-//        }
-//        cvtColor(prevFrame, prevGrey, CV_RGBA2GRAY);
+        if (prevFrame.data() == null) {
+            prevFrame = currFrame;
+            Log.i(TAG, "No data.");
+        }
+        cvtColor(prevFrame, prevGrey, CV_RGBA2GRAY);
         cvtColor(currFrame, currGrey, CV_BGRA2GRAY);
         // Improve quality and corner detection
         Log.i(TAG, "GOT CURRENT FRAME!" + currFrame.data());
@@ -160,7 +162,7 @@ public class MainActivity extends AppCompatActivity implements CvCameraPreview.C
         // erode
         Mat dilate = getStructuringElement(Imgproc.MORPH_RECT, new Size(3, 3));
         dilate(currGrey, currGrey, dilate);
-//        dilate(prevGrey, prevGrey, dilate);
+        dilate(prevGrey, prevGrey, dilate);
 
         // Compute goodFeaturesToTrack()
         goodFeaturesToTrack(currGrey, prevFeatures, 500, 0.05, 5.0, null, 3, false, 0.04);
@@ -168,80 +170,79 @@ public class MainActivity extends AppCompatActivity implements CvCameraPreview.C
         cornerSubPix(currGrey, prevFeatures, new Size(15, 15), new Size(-1, -1), term);
 
         // Compute Optical Flow using calcOpticalFlyPyrLK()
-        Mat features_found = new Mat(); // status
-        Mat feature_err = new Mat(); // err
+        Mat status = new Mat(); // status
+        Mat err = new Mat(); // err
         Mat currFeatures = new Mat();
+        Mat outPutHomography = null;
 
-        calcOpticalFlowPyrLK(currGrey, currGrey, prevFeatures, currFeatures, features_found, feature_err, new Size(winSize, winSize), 5, term, 0, 1e-4);
+        calcOpticalFlowPyrLK(currGrey, currGrey, prevFeatures, currFeatures, status, err, new Size(winSize, winSize), 5, term, 0, 1e-4);
 
-        // Make an image of the results
-        FloatIndexer cornersAidx = prevFeatures.createIndexer(); //prevPointIndex
-        FloatIndexer cornersBidx = currFeatures.createIndexer(); //currPointIndex
-        UByteIndexer features_found_idx = features_found.createIndexer(); //status
-        FloatIndexer feature_errors_idx = feature_err.createIndexer(); //err
+        //create indexer for the detected and tracked points
+        FloatIndexer nextPointIndex;
+        FloatIndexer prevPointIndex;
+
+        FloatIndexer nextCleanPointIndex;
+        FloatIndexer prevCleanPointIndex;
+
+        //indexer for status returned by Lukas-Kanade.. status=0, implies tracking was not successfully.. status=1 implies otherwise
+        UByteIndexer statusIndex;
+        FloatIndexer errorIndex;
+
+        statusIndex = status.createIndexer(true);
+        errorIndex = err.createIndexer(true);
+        nextPointIndex = currFeatures.createIndexer(true);
+        prevPointIndex = prevFeatures.createIndexer(true);
+
+        //delete bad points based on the returned status
 
         Mat prevCornersClean = new Mat(prevFeatures.size(), prevFeatures.type());
-        Mat currCornersClean = new Mat(currFeatures.size(), currFeatures.type());
+        Mat nextCornersClean = new Mat(currFeatures.size(), currFeatures.type());
 
-        FloatIndexer currCleanPointIndex = currCornersClean.createIndexer(true);
-        FloatIndexer prevCleanPointIndex = prevCornersClean.createIndexer(true);
+        nextCleanPointIndex = nextCornersClean.createIndexer(true);
+        prevCleanPointIndex = prevCornersClean.createIndexer(true);
 
-        //Keep only good points, REFER TO videoStabilization project
         int k = 0;
         int j;
-        for (j = 0; j < features_found.rows(); j++) {
-            if (features_found_idx.get(j) != 0) {
-                currCleanPointIndex.put(k, 0, cornersBidx.get(j, 0));
-                currCleanPointIndex.put(k, 1, cornersBidx.get(j, 1));
-                prevCleanPointIndex.put(k, 0, cornersAidx.get(j, 0));
-                prevCleanPointIndex.put(k, 1, cornersAidx.get(j, 1));
+
+        for (j = 0; j < status.rows(); j++) {
+
+            if (statusIndex.get(j) != 0) {
+
+                nextCleanPointIndex.put(k, 0, nextPointIndex.get(j, 0));
+                nextCleanPointIndex.put(k, 1, nextPointIndex.get(j, 1));
+                prevCleanPointIndex.put(k, 0, prevPointIndex.get(j, 0));
+                prevCleanPointIndex.put(k, 1, prevPointIndex.get(j, 1));
 
                 k++;
-            }
-        }
 
-        //delete unused space in the corner matrix
-        try {
-            currCornersClean.pop_back(j - k + 1);
-            prevCornersClean.pop_back(j - k + 1);
-        }catch (Exception e){
-            e.printStackTrace();
-        }
 
-        for (int i = 0; i < prevCleanPointIndex.sizes()[0]; i++) {
-            if (features_found_idx.get(i) == 0 || feature_errors_idx.get(i) > 550) {
-                Log.e(TAG, "Error is " + feature_errors_idx.get(i));
-                continue;
+                Point p0 = new Point(Math.round(prevCleanPointIndex.get(j, 0)),
+                        Math.round(prevCleanPointIndex.get(j, 1)));
+                Point p1 = new Point(Math.round(nextCleanPointIndex.get(j, 0)),
+                        Math.round(nextCleanPointIndex.get(j, 1)));
+                line(currFrame, p0, p1, new Scalar(0, 255, 0, 0),
+                        2, 8, 0);
+
             }
 
-            Log.i(TAG, "Got it!");
-            Point p0 = new Point(Math.round(prevCleanPointIndex.get(i, 0)),
-                    Math.round(prevCleanPointIndex.get(i, 1)));
-            Point p1 = new Point(Math.round(currCleanPointIndex.get(i, 0)),
-                    Math.round(currCleanPointIndex.get(i, 1)));
-            line(currFrame, p0, p1, new Scalar(0, 255, 0, 0),
-                    2, 8, 0);
         }
 
-//        // Estimate a rigid transformation
-//        Mat transformMatrix = estimateRigidTransform(prevCornersClean, currCornersClean, false);
-//        if (transformMatrix.data() == null) {
-//            last_transformMatrix.copyTo(transformMatrix);
-//        }
-//
-//        transformMatrix.copyTo(last_transformMatrix);
-//        // Smoothing using Kalman filter
+        nextCornersClean.pop_back(j - k + 1);
+        prevCornersClean.pop_back(j - k + 1);
 
 
-//
-//        // Warping of the picture
-//        Mat stabFrame = new Mat();
-//        // warpAffine(currFrame, stabFrame, transformMatrix, currFrame.size());
-        currFeatures.release();
-        currGrey.release();
-        return currFrame;
+        // Estimate a rigid transformation
+        Mat correctedMatrix = estimateRigidTransform(prevCornersClean,nextCornersClean,false);
+        if (correctedMatrix.data() == null) {
+            last_transformMatrix.copyTo(correctedMatrix);
+        }
+        // Smoothing using Kalman filter
+        // Warping of the picture
+        Mat corrected = new Mat();
+        warpAffine(currFrame, corrected, correctedMatrix, currFrame.size());
+        prevFrame.release();
+        prevFrame = currFrame.clone();
+        return corrected;
 
     }
-
-    private void doKalmanFilter(){}
 }
