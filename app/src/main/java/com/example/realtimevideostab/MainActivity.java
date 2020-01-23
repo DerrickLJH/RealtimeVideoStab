@@ -64,16 +64,18 @@ import org.opencv.core.CvType;
 import org.opencv.core.MatOfByte;
 import org.opencv.core.MatOfFloat;
 import org.opencv.core.MatOfPoint;
-import org.opencv.core.Point;
-import org.opencv.core.Scalar;
 import org.opencv.imgproc.Imgproc;
-import org.opencv.video.Video;
 
+import static org.bytedeco.javacpp.opencv_video.KalmanFilter;
+import static org.bytedeco.javacpp.opencv_video.calcOpticalFlowPyrLK;
+import static org.bytedeco.javacpp.opencv_core.Point;
+import static org.bytedeco.javacpp.opencv_imgproc.putText;
+import static org.bytedeco.javacpp.opencv_imgproc.rectangle;
+import static org.bytedeco.javacpp.opencv_imgproc.resize;
 import static org.bytedeco.javacpp.opencv_core.CV_8UC1;
 import static org.bytedeco.javacpp.opencv_imgproc.cvtColor;
 import static org.bytedeco.javacpp.opencv_imgproc.CV_BGR2GRAY;
 import static org.bytedeco.javacpp.opencv_video.estimateRigidTransform;
-
 
 public class MainActivity extends AppCompatActivity implements CvCameraPreview.CvCameraViewListener {
     public static final String TAG = "MainActivity";
@@ -147,168 +149,105 @@ public class MainActivity extends AppCompatActivity implements CvCameraPreview.C
 
     @Override
     public Mat onCameraFrame(Mat currFrame) {
-//        int winSize = 15;
-//        TermCriteria term = new TermCriteria(TermCriteria.EPS | TermCriteria.MAX_ITER, 20, 0.03);
-//
-//        if (prevFrame.data() == null) {
-//            prevFrame = currFrame;
-//            Log.i(TAG, "No data.");
-//        }
-//        cvtColor(prevFrame, prevGrey, CV_RGBA2GRAY);
-        if (prevFrame.rows() == 0) {
+        int winSize = 15;
+        TermCriteria term = new TermCriteria(TermCriteria.EPS | TermCriteria.MAX_ITER, 20, 0.03);
 
-            //Log.d("Baz", "First time opflow");
-            // first time through the loop so we need prev and this mats
-            // plus prev points
-            // get this mat
-            cvtColor(currFrame, currGrey, CV_BGRA2GRAY);
-            // copy that to prev mat
-            matOpFlowThis.copyTo(matOpFlowPrev);
-
-            // get prev corners
-            goodFeaturesToTrack(prevGrey, prevFeatures, 500, 0.05,20);
-            mMOP2fptsPrev.fromArray(MOPcorners.toArray());
-
-            // get safe copy of this corners
-            mMOP2fptsPrev.copyTo(mMOP2fptsSafe);
-        } else {
-            //Log.d("Baz", "Opflow");
-            // we've been through before so
-            // this mat is valid. Copy it to prev mat
-            matOpFlowThis.copyTo(matOpFlowPrev);
-
-            // get this mat
-            Imgproc.cvtColor(mRgba, matOpFlowThis, Imgproc.COLOR_RGBA2GRAY);
-
-            // get the corners for this mat
-            Imgproc.goodFeaturesToTrack(matOpFlowThis, MOPcorners, 500, 0.05, 20);
-            mMOP2fptsThis.fromArray(MOPcorners.toArray());
-
-            // retrieve the corners from the prev mat
-            // (saves calculating them again)
-            mMOP2fptsSafe.copyTo(mMOP2fptsPrev);
-
-            // and save this corners for next time through
-
-            mMOP2fptsThis.copyTo(mMOP2fptsSafe);
+        if (prevFrame.data() == null) {
+            prevFrame = currFrame;
+            Log.i(TAG, "No data.");
         }
+        cvtColor(prevFrame, prevGrey, CV_RGBA2GRAY);
+        cvtColor(currFrame, currGrey, CV_BGRA2GRAY);
         // Improve quality and corner detection
-//        Log.i(TAG, "GOT CURRENT FRAME!" + currFrame.data());
-//
-//        medianBlur(currGrey, currGrey, 5);
-////        medianBlur(prevGrey, prevGrey, 5);
-//        prevFeatures = new Mat();
-//        // erode
-//        Mat dilate = getStructuringElement(Imgproc.MORPH_RECT, new Size(3, 3));
-//        dilate(currGrey, currGrey, dilate);
-//        dilate(prevGrey, prevGrey, dilate);
-//
-//        // Compute goodFeaturesToTrack()
-//        goodFeaturesToTrack(currGrey, prevFeatures, 500, 0.05, 5.0, null, 3, false, 0.04);
-//        if (prevFeatures.empty()) return currFrame;
-//        cornerSubPix(currGrey, prevFeatures, new Size(15, 15), new Size(-1, -1), term);
-//
-//        // Compute Optical Flow using calcOpticalFlyPyrLK()
-//        Mat status = new Mat(); // status
-//        Mat err = new Mat(); // err
-//        Mat currFeatures = new Mat();
-//        Mat outPutHomography = null;
-//
-//        calcOpticalFlowPyrLK(currGrey, currGrey, prevFeatures, currFeatures, status, err, new Size(winSize, winSize), 5, term, 0, 1e-4);
-//
-//        //create indexer for the detected and tracked points
-//        FloatIndexer nextPointIndex;
-//        FloatIndexer prevPointIndex;
-//
-//        FloatIndexer nextCleanPointIndex;
-//        FloatIndexer prevCleanPointIndex;
-//
-//        //indexer for status returned by Lukas-Kanade.. status=0, implies tracking was not successfully.. status=1 implies otherwise
-//        UByteIndexer statusIndex;
-//        FloatIndexer errorIndex;
-//
-//        statusIndex = status.createIndexer(true);
-//        errorIndex = err.createIndexer(true);
-//        nextPointIndex = currFeatures.createIndexer(true);
-//        prevPointIndex = prevFeatures.createIndexer(true);
-//
-//        //delete bad points based on the returned status
-//
-//        Mat prevCornersClean = new Mat(prevFeatures.size(), prevFeatures.type());
-//        Mat nextCornersClean = new Mat(currFeatures.size(), currFeatures.type());
-//
-//        nextCleanPointIndex = nextCornersClean.createIndexer(true);
-//        prevCleanPointIndex = prevCornersClean.createIndexer(true);
-//
-//        int k = 0;
-//        int j;
-//
-//        for (j = 0; j < status.rows(); j++) {
-//
-//            if (statusIndex.get(j) != 0) {
-//
-//                nextCleanPointIndex.put(k, 0, nextPointIndex.get(j, 0));
-//                nextCleanPointIndex.put(k, 1, nextPointIndex.get(j, 1));
-//                prevCleanPointIndex.put(k, 0, prevPointIndex.get(j, 0));
-//                prevCleanPointIndex.put(k, 1, prevPointIndex.get(j, 1));
-//
-//                k++;
-//
-//
-//                Point p0 = new Point(Math.round(prevCleanPointIndex.get(j, 0)),
-//                        Math.round(prevCleanPointIndex.get(j, 1)));
-//                Point p1 = new Point(Math.round(nextCleanPointIndex.get(j, 0)),
-//                        Math.round(nextCleanPointIndex.get(j, 1)));
-//                line(currFrame, p0, p1, new Scalar(0, 255, 0, 0),
-//                        2, 8, 0);
-//
-//            }
-//
-//        }
-//
-//        nextCornersClean.pop_back(j - k + 1);
-//        prevCornersClean.pop_back(j - k + 1);
-//
-//
-//        // Estimate a rigid transformation
-//        Mat correctedMatrix = estimateRigidTransform(prevCornersClean,nextCornersClean,false);
-//        if (correctedMatrix.data() == null) {
-//            last_transformMatrix.copyTo(correctedMatrix);
-//        }
-//        // Smoothing using Kalman filter
-//        // Warping of the picture
-//        Mat corrected = new Mat();
-//        warpAffine(currFrame, corrected, correctedMatrix, currFrame.size());
-//        prevFrame.release();
-//        prevFrame = currFrame.clone();
- /*
-    Parameters:
-        prevImg first 8-bit input image
-        nextImg second input image
-        prevPts vector of 2D points for which the flow needs to be found; point coordinates must be single-precision floating-point numbers.
-        nextPts output vector of 2D points (with single-precision floating-point coordinates) containing the calculated new positions of input features in the second image; when OPTFLOW_USE_INITIAL_FLOW flag is passed, the vector must have the same size as in the input.
-        status output status vector (of unsigned chars); each element of the vector is set to 1 if the flow for the corresponding features has been found, otherwise, it is set to 0.
-        err output vector of errors; each element of the vector is set to an error for the corresponding feature, type of the error measure can be set in flags parameter; if the flow wasn't found then the error is not defined (use the status parameter to find such cases).
-    */
-        Video.calcOpticalFlowPyrLK(matOpFlowPrev, matOpFlowThis, mMOP2fptsPrev, mMOP2fptsThis, mMOBStatus, mMOFerr);
+        Log.i(TAG, "GOT CURRENT FRAME!" + currFrame.data());
 
-        cornersPrev = mMOP2fptsPrev.toList();
-        cornersThis = mMOP2fptsThis.toList();
-        byteStatus = mMOBStatus.toList();
+        medianBlur(currGrey, currGrey, 5);
+//        medianBlur(prevGrey, prevGrey, 5);
+        prevFeatures = new Mat();
+        // erode
+        Mat dilate = getStructuringElement(Imgproc.MORPH_RECT, new Size(3, 3));
+        dilate(currGrey, currGrey, dilate);
+        dilate(prevGrey, prevGrey, dilate);
 
-        int y = byteStatus.size() - 1;
+        // Compute goodFeaturesToTrack()
+        goodFeaturesToTrack(currGrey, prevFeatures, 500, 0.05, 5.0, null, 3, false, 0.04);
+        if (prevFeatures.empty()) return currFrame;
+        cornerSubPix(currGrey, prevFeatures, new Size(15, 15), new Size(-1, -1), term);
 
-        for (int x = 0; x < y; x++) {
-            if (byteStatus.get(x) == 1) {
-                Point pt = cornersThis.get(x);
-                Point pt2 = cornersPrev.get(x);
+        // Compute Optical Flow using calcOpticalFlyPyrLK()
+        Mat status = new Mat(); // status
+        Mat err = new Mat(); // err
+        Mat currFeatures = new Mat();
+        Mat outPutHomography = null;
 
-                Imgproc.circle(mRgba, pt, 5, new Scalar(255,0,0), 5);
-                Imgproc.line(mRgba, pt, pt2, new Scalar(255,0,0), 5);
+        calcOpticalFlowPyrLK(currGrey, currGrey, prevFeatures, currFeatures, status, err, new Size(winSize, winSize), 5, term, 0, 1e-4);
+
+        //create indexer for the detected and tracked points
+        FloatIndexer nextPointIndex;
+        FloatIndexer prevPointIndex;
+
+        FloatIndexer nextCleanPointIndex;
+        FloatIndexer prevCleanPointIndex;
+
+        //indexer for status returned by Lukas-Kanade.. status=0, implies tracking was not successfully.. status=1 implies otherwise
+        UByteIndexer statusIndex;
+        FloatIndexer errorIndex;
+
+        statusIndex = status.createIndexer(true);
+        errorIndex = err.createIndexer(true);
+        nextPointIndex = currFeatures.createIndexer(true);
+        prevPointIndex = prevFeatures.createIndexer(true);
+
+        //delete bad points based on the returned status
+
+        Mat prevCornersClean = new Mat(prevFeatures.size(), prevFeatures.type());
+        Mat nextCornersClean = new Mat(currFeatures.size(), currFeatures.type());
+
+        nextCleanPointIndex = nextCornersClean.createIndexer(true);
+        prevCleanPointIndex = prevCornersClean.createIndexer(true);
+
+        int k = 0;
+        int j;
+
+        for (j = 0; j < status.rows(); j++) {
+
+            if (statusIndex.get(j) != 0) {
+
+                nextCleanPointIndex.put(k, 0, nextPointIndex.get(j, 0));
+                nextCleanPointIndex.put(k, 1, nextPointIndex.get(j, 1));
+                prevCleanPointIndex.put(k, 0, prevPointIndex.get(j, 0));
+                prevCleanPointIndex.put(k, 1, prevPointIndex.get(j, 1));
+
+                k++;
+
+
+                Point p0 = new Point(Math.round(prevCleanPointIndex.get(j, 0)),
+                        Math.round(prevCleanPointIndex.get(j, 1)));
+                Point p1 = new Point(Math.round(nextCleanPointIndex.get(j, 0)),
+                        Math.round(nextCleanPointIndex.get(j, 1)));
+                line(currFrame, p0, p1, new Scalar(0, 255, 0, 0),
+                        2, 8, 0);
+
             }
+
         }
 
-        return currFrame;
+        nextCornersClean.pop_back(j - k + 1);
+        prevCornersClean.pop_back(j - k + 1);
+
+
+        // Estimate a rigid transformation
+        Mat correctedMatrix = estimateRigidTransform(prevCornersClean,nextCornersClean,false);
+        if (correctedMatrix.data() == null) {
+            last_transformMatrix.copyTo(correctedMatrix);
+        }
+        // Smoothing using Kalman filter
+        // Warping of the picture
+        Mat corrected = new Mat();
+        warpAffine(currFrame, corrected, correctedMatrix, currFrame.size());
+        prevFrame.release();
+        prevFrame = currFrame.clone();
+        return corrected;
 
     }
 }
